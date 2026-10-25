@@ -1,7 +1,7 @@
 from pyrogram import Client, filters
 from config import ADMIN_ID
 from database import db
-from helpers import get_pending, fs_markup, send_content, send_setting, auto_delete
+from helpers import get_pending, fs_markup, send_content, send_setting, auto_delete, is_admin, set_menu
 
 DEFAULT_WELCOME = "👋 Hello {name}!\n\nMain ek File Store Bot hu. Mere paas koi valid link se aao."
 FS_MSG = {}
@@ -34,6 +34,8 @@ async def gate_and_send(c, user, token):
 @Client.on_message(filters.command("start") & filters.private)
 async def start(c, m):
     db.add_user(m.from_user.id)
+    if is_admin(m.from_user.id):
+        await set_menu(c, m.from_user.id)
     if len(m.command) > 1:
         await gate_and_send(c, m.from_user, m.command[1])
         return

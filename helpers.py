@@ -2,7 +2,8 @@ import asyncio, secrets, time
 from pyrogram import filters
 from pyrogram.enums import ChatMemberStatus as S
 from pyrogram.errors import FloodWait, UserNotParticipant
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import (InlineKeyboardMarkup, InlineKeyboardButton, BotCommand,
+                            BotCommandScopeDefault, BotCommandScopeChat)
 from config import ADMIN_ID, FS_WINDOW, AUTO_DELETE, REQUIRED_REQUESTS
 from database import db
 
@@ -85,34 +86,32 @@ async def get_invite(c, cid):
     return None
 
 async def get_pending(c, uid):
-    # Rule: in every 24 hrs the user must send join-requests to ANY 3 channels
-    # (channels where he is already joined don't count and are never shown).
-    # If fewer than 3 channels are left for him, he only needs those.
+    # RULE (rolling 24 hrs):
+    #  - user must send join-requests to 3 NEW channels per 24 hrs
+    #  - only (3 - already done in last 24h) channels are SHOWN, never the full list
+    #  - a channel he already requested (ever) or is joined in is never asked again
+    #  - nothing new left to request -> free access, no verification
     # Returns the list of channels to SHOW; empty list = verified.
     now = time.time()
-    done, avail = 0, []
-    for cid in list(db.data["channels"]):
-        reqs = db.data["requests"].setdefault(cid, {})
-        ts = reqs.get(str(uid))
+    reqs_all = db.data["requests"]
+    recent = 0
+    for cid in db.data["channels"]:
+        ts = reqs_all.get(cid, {}).get(str(uid))
         if ts and now - ts < FS_WINDOW:
-            done += 1          # valid request in last 24h (counts even if admin approved it)
-            continue
-        member = await is_member(c, int(cid), uid)
-        if ts:
-            # old request expired -> forget it; decline if still pending so he can request again
-            if not member:
-                try:
-                    await c.decline_chat_join_request(int(cid), uid)
-                except Exception:
-                    pass
-            reqs.pop(str(uid), None)
-            db.dirty = True
-        if not member:
-            avail.append(cid)
-    need = min(REQUIRED_REQUESTS, done + len(avail))
-    print("[FS] user=%s done=%d avail=%d need=%d" % (uid, done, len(avail), need))
-    if done >= need:
+            recent += 1
+    if recent >= REQUIRED_REQUESTS:
         return []
+    need = REQUIRED_REQUESTS - recent
+    avail = []
+    for cid in list(db.data["channels"]):
+        if reqs_all.get(cid, {}).get(str(uid)):
+            continue                      # already requested earlier -> never again
+        if await is_member(c, int(cid), uid):
+            continue                      # already joined -> never asked
+        avail.append(cid)
+        if len(avail) >= need:
+            break
+    print("[FS] user=%s recent=%d need=%d show=%d" % (uid, recent, need, len(avail)))
     return avail
 
 async def fs_markup(c, pending, token):
@@ -178,3 +177,42 @@ async def send_content(c, uid, token):
                 break
         await asyncio.sleep(0.4)
     await send_setting(c, uid, "last")
+
+# ─────────────── Bot command menu ───────────────
+USER_CMDS = [BotCommand("start", "Start the bot")]
+ADMIN_CMDS = [
+    BotCommand("start", "Start the bot"),
+    BotCommand("genlink1", "Single file - shareable link"),
+    BotCommand("genlink2", "Single file - secured link (no forward/save)"),
+    BotCommand("batch1", "Multiple files - shareable link"),
+    BotCommand("batch2", "Multiple files - secured link"),
+    BotCommand("done", "Finish current batch / channel session"),
+    BotCommand("cancel", "Cancel current session"),
+    BotCommand("addchannel", "Add Force-Sub channels"),
+    BotCommand("deletechannels", "Remove Force-Sub channels"),
+    BotCommand("channels", "List Force-Sub channels"),
+    BotCommand("setfirstmessage", "Set message shown before files"),
+    BotCommand("setlastmessage", "Set message shown after files"),
+    BotCommand("setgreeting", "Set greeting for normal /start"),
+    BotCommand("clearmessage", "Remove first / last / greeting message"),
+]
+OWNER_CMDS = ADMIN_CMDS + [
+    BotCommand("addauthedit", "Make a user admin"),
+    BotCommand("delauth", "Remove a user from admins"),
+]
+_menu_done = set()
+
+async def set_menu(c, uid=None, force=False):
+    # uid=None -> default menu for everyone + owner menu. Else menu for that admin.
+    try:
+        if uid is None:
+            await c.set_bot_commands(USER_CMDS, scope=BotCommandScopeDefault())
+            uid = ADMIN_ID
+        if uid in _menu_done and not force:
+            return
+        cmds = OWNER_CMDS if uid == ADMIN_ID else ADMIN_CMDS
+        await c.set_bot_commands(cmds, scope=BotCommandScopeChat(chat_id=uid))
+        _menu_done.add(uid)
+        print("[MENU] commands set for", uid)
+    except Exception as e:
+        print("[MENU] set failed for", uid, repr(e))

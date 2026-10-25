@@ -19,21 +19,32 @@ async def _make_link(c, ids, secure):
 
 @Client.on_message(filters.command(["genlink1", "genlink2"]) & filters.private & admin_f)
 async def genlink(c, m):
+    junk = [m.id]
     try:
         secure = m.command[0].lower() == "genlink2"
         r = m.reply_to_message
         if not r:
-            return await m.reply("Kisi file/message ko reply karke command do.")
+            p = await m.reply("📎 Jis file/message ka link banana hai wo ab bhejo.\n(Ek se zyada files ke liye /batch1 ya /batch2 use karo.) Cancel: /cancel")
+            junk.append(p.id)
+            try:
+                r = await c.listen(m.chat.id, timeout=300)
+            except Exception:
+                await clean(c, m.chat.id, junk)
+                return await c.send_message(m.chat.id, "⏰ Time out ho gaya.")
+            if r.text and r.text.strip().lower().startswith("/cancel"):
+                await clean(c, m.chat.id, junk + [r.id])
+                return await c.send_message(m.chat.id, "❌ Cancel ho gaya.")
+        junk.append(r.id)
         ids = await _store(c, [r])
         if not ids:
-            return await m.reply("❌ Storage channel me save nahi hua. Bot ke rights check karo.")
+            return await c.send_message(m.chat.id, "❌ Storage channel me save nahi hua. Bot ke rights check karo.")
         link = await _make_link(c, ids, secure)
         await c.send_message(m.chat.id, "✅ %s Link:\n\n%s" % ("Secured (no forward/save)" if secure else "Shareable", link),
                              disable_web_page_preview=True)
-        await clean(c, m.chat.id, [m.id, r.id])
+        await clean(c, m.chat.id, junk)
     except Exception as e:
         print("[GENLINK] error:", repr(e))
-        await m.reply("❌ Error: %s" % e)
+        await c.send_message(m.chat.id, "❌ Error: %s" % e)
 
 @Client.on_message(filters.command(["batch1", "batch2"]) & filters.private & admin_f)
 async def batch_start(c, m):

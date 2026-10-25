@@ -48,12 +48,6 @@ class Database:
         async with self.lock:
             try:
                 self.dirty = False
-                now = time.time()
-                for cid in list(self.data["requests"]):
-                    reqs = self.data["requests"][cid]
-                    for uid in list(reqs):
-                        if now - reqs[uid] > FS_WINDOW * 3:
-                            del reqs[uid]
                 raw = json.dumps(self.data, indent=1).encode()
                 bio = io.BytesIO(raw)
                 bio.name = "database.json"
