@@ -1,4 +1,4 @@
-import asyncio, secrets, time
+import asyncio, html as _html, secrets, time
 import requests
 from pyrogram import filters
 from pyrogram.enums import ChatMemberStatus as S
@@ -161,21 +161,57 @@ async def add_channel(c, cid, manual=None, username=None, title=None):
     return t
 
 # ─────────────── Content delivery ───────────────
-async def send_setting(c, uid, key):
+def fill_text(txt, user, bot_name):
+    # placeholders usable in first / last / greeting messages
+    first = _html.escape(getattr(user, "first_name", None) or "friend")
+    last = _html.escape(getattr(user, "last_name", None) or "")
+    uname = getattr(user, "username", None)
+    uid = getattr(user, "id", None)
+    rep = {
+        "{first}": first,
+        "{last}": last,
+        "{name}": (first + " " + last).strip(),
+        "{mention}": ('<a href="tg://user?id=%s">%s</a>' % (uid, first)) if uid else first,
+        "{username}": _html.escape("@" + uname) if uname else first,
+        "{id}": str(uid or ""),
+        "{bot}": _html.escape(bot_name or "Bot"),
+    }
+    for k, v in rep.items():
+        txt = txt.replace(k, v)
+    return txt
+
+async def send_setting(c, uid, key, user=None):
     ref = db.data["settings"].get(key)
     if not ref:
         return
-    m = await safe(c.copy_message, uid, db.sid, ref)
-    if m:
-        auto_delete(m)
+    if user is None:
+        try:
+            user = await c.get_users(uid)
+        except Exception:
+            user = None
+    msg = None
+    try:
+        src = await c.get_messages(db.sid, ref)
+        bot = c.me.first_name or "Bot"
+        if src and not src.empty and src.text and "{" in src.text:
+            msg = await c.send_message(uid, fill_text(src.text.html, user, bot), disable_web_page_preview=True)
+        elif src and not src.empty and src.caption and "{" in src.caption:
+            msg = await c.copy_message(uid, db.sid, ref, caption=fill_text(src.caption.html, user, bot))
+    except Exception as e:
+        print("[SETTING] personalise failed, sending plain:", repr(e))
+        msg = None
+    if msg is None:
+        msg = await safe(c.copy_message, uid, db.sid, ref)
+    if msg:
+        auto_delete(msg)
 
-async def send_content(c, uid, token):
+async def send_content(c, uid, token, user=None):
     link = db.data["links"].get(token)
     print("[SEND] uid=%s token=%s found=%s" % (uid, token, bool(link)))
     if not link:
         await c.send_message(uid, "❌ Link invalid hai ya expire ho chuka hai.")
         return
-    await send_setting(c, uid, "first")
+    await send_setting(c, uid, "first", user)
     for mid in sorted(link["ids"]):
         for attempt in range(2):
             try:
@@ -188,7 +224,7 @@ async def send_content(c, uid, token):
                 await c.send_message(uid, "⚠️ File send nahi hui: %s" % e)
                 break
         await asyncio.sleep(0.4)
-    await send_setting(c, uid, "last")
+    await send_setting(c, uid, "last", user)
 
 # ─────────────── Bot command menu ───────────────
 USER_CMDS = [BotCommand("start", "Start the bot")]

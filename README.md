@@ -21,6 +21,7 @@ Bot must be ADMIN in the Storage Channel (post, pin, delete rights).
 - /channels - list Force-Sub channels
 - /checkuser - see a user's status per channel (joined / requested / baaki) and what he will be shown
 - /setfirstmessage /setlastmessage /setgreeting /clearmessage first|last|greeting
+  (placeholders in text/caption: {first} {last} {name} {mention} {username} {id} {bot})
 - /addauthedit /delauth then forward a message of the user or send his ID (main admin only)
 - All commands appear in the bot's command menu automatically (admin only)
 

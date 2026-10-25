@@ -3,7 +3,7 @@ from config import ADMIN_ID
 from database import db
 from helpers import get_pending, fs_markup, send_content, send_setting, auto_delete, is_admin, set_menu
 
-DEFAULT_WELCOME = "👋 Hello {name}!\n\nMain ek File Store Bot hu. Mere paas koi valid link se aao."
+DEFAULT_WELCOME = "👋 Hello {mention}!\n\nWelcome to <b>{bot}</b>.\nOpen a valid link to get your files."
 FS_MSG = {}
 
 async def _del_old(c, uid):
@@ -27,7 +27,7 @@ async def gate_and_send(c, user, token):
                 )
                 FS_MSG[user.id] = m.id
                 return
-        await send_content(c, user.id, token)
+        await send_content(c, user.id, token, user)
     except Exception as e:
         print("[START] error:", repr(e))
 
@@ -40,9 +40,9 @@ async def start(c, m):
         await gate_and_send(c, m.from_user, m.command[1])
         return
     if db.data["settings"].get("greeting"):
-        await send_setting(c, m.from_user.id, "greeting")
+        await send_setting(c, m.from_user.id, "greeting", m.from_user)
     else:
-        r = await m.reply(DEFAULT_WELCOME.format(name=m.from_user.first_name))
+        r = await m.reply(DEFAULT_WELCOME.format(mention=m.from_user.mention, bot=c.me.first_name))
         auto_delete(r)
 
 @Client.on_callback_query(filters.regex(r"^retry:"))

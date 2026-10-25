@@ -5,7 +5,7 @@ from helpers import admin_f, is_admin
 
 async def _setter(c, m, key, label):
     try:
-        p = await m.reply("📝 %s message bhejo (text/photo/video...). Cancel: /cancel" % label)
+        p = await m.reply("📝 %s message bhejo (text/photo/video...).\n\nUser ke naam ke liye ye likh sakte ho:\n{first} {last} {name} {mention} {username} {bot}\n\nCancel: /cancel" % label)
         r = await c.listen(m.chat.id, timeout=300)
         if r.text and r.text.strip().lower().startswith("/cancel"):
             return await m.reply("Cancelled.")
