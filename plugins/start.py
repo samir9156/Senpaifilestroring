@@ -33,7 +33,7 @@ async def gate_and_send(c, user, token):
 
 @Client.on_message(filters.command("start") & filters.private)
 async def start(c, m):
-    db.add_user(m.from_user.id)
+    db.add_user(m.from_user.id, m.from_user.first_name, m.from_user.username)
     if is_admin(m.from_user.id):
         await set_menu(c, m.from_user.id)
     if len(m.command) > 1:

@@ -20,6 +20,10 @@ Bot must be ADMIN in the Storage Channel (post, pin, delete rights).
 - /deletechannels then forward one message from each channel, /done - remove channels
 - /channels - list Force-Sub channels
 - /checkuser - see a user's status per channel (joined / requested / baaki) and what he will be shown
+- /cleanchannels - remove dead channels (deleted / bot removed / bot not admin); dead channels are ignored for users anyway
+- /refreshlinks - create fresh join-request invite links for all channels
+- /stats - users, new/active, links, channels, requests
+- /users - download users.txt
 - /setfirstmessage /setlastmessage /setgreeting /clearmessage first|last|greeting
   (placeholders in text/caption: {first} {last} {name} {mention} {username} {id} {bot})
 - /addauthedit /delauth then forward a message of the user or send his ID (main admin only)

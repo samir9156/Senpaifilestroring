@@ -57,8 +57,13 @@ def _bot_api(method, params):
     r = requests.post("https://api.telegram.org/bot%s/%s" % (BOT_TOKEN, method), json=params, timeout=20)
     return r.json()
 
+# errors that mean the CHANNEL is dead for us (deleted / bot kicked / bot not admin)
+DEAD_HINTS = ("chat not found", "kicked", "not a member", "member list is inaccessible",
+              "not enough rights", "chat_admin_required", "bot is not")
+DEAD_ERR_NAMES = {"ChannelPrivate", "ChatAdminRequired", "ChannelInvalid"}
+
 async def is_member(c, cid, uid):
-    # 1) Bot API getChatMember: most reliable (no Pyrogram peer-cache problems)
+    # returns True (joined) / False (not joined) / None (channel is dead -> ignore it)
     try:
         res = await asyncio.to_thread(_bot_api, "getChatMember", {"chat_id": cid, "user_id": uid})
         if res.get("ok"):
@@ -67,10 +72,12 @@ async def is_member(c, cid, uid):
             ok = st in ("creator", "administrator", "member") or (st == "restricted" and bool(r.get("is_member")))
             print("[FS] member check ch=%s user=%s status=%s -> %s" % (cid, uid, st, ok))
             return ok
-        print("[FS] BotAPI getChatMember failed ch=%s user=%s: %s" % (cid, uid, res.get("description")))
+        desc = (res.get("description") or "").lower()
+        print("[FS] BotAPI getChatMember failed ch=%s user=%s: %s" % (cid, uid, desc))
+        if any(h in desc for h in DEAD_HINTS):
+            return None
     except Exception as e:
         print("[FS] BotAPI error:", repr(e))
-    # 2) fallback: Pyrogram
     try:
         mem = await c.get_chat_member(cid, uid)
         if mem.status in (S.MEMBER, S.ADMINISTRATOR, S.OWNER):
@@ -81,8 +88,23 @@ async def is_member(c, cid, uid):
     except UserNotParticipant:
         return False
     except Exception as e:
+        if type(e).__name__ in DEAD_ERR_NAMES:
+            return None
         print("[FS] member check error", cid, repr(e))
         return False
+
+async def channel_alive(c, cid):
+    # (True, "ok") | (False, reason) | (None, error) -> None means "could not check", never delete
+    try:
+        res = await asyncio.to_thread(_bot_api, "getChatMember", {"chat_id": int(cid), "user_id": c.me.id})
+        if not res.get("ok"):
+            return False, res.get("description", "error")
+        st = res["result"].get("status")
+        if st in ("administrator", "creator"):
+            return True, "ok"
+        return False, "bot admin nahi hai (%s)" % st
+    except Exception as e:
+        return None, repr(e)
 
 async def get_invite(c, cid):
     ch = db.data["channels"].get(str(cid))
@@ -107,6 +129,7 @@ async def get_pending(c, uid):
     # RULE (rolling 24 hrs):
     #  - user must send join-requests to 3 NEW channels per 24 hrs
     #  - joined channels / already requested channels are NEVER counted or shown
+    #  - DEAD channels (deleted / bot removed / bot not admin) are ignored completely
     #  - only what is really left is shown (max 3 - done today). 1 or 2 left -> only 1 or 2
     #  - nothing left -> free access
     # Returns the list of channels to SHOW; empty list = verified.
@@ -122,8 +145,12 @@ async def get_pending(c, uid):
     need = REQUIRED_REQUESTS - recent
     cands = [cid for cid in db.data["channels"] if not reqs_all.get(cid, {}).get(str(uid))]
     flags = await asyncio.gather(*[is_member(c, int(cid), uid) for cid in cands]) if cands else []
-    avail = [cid for cid, joined in zip(cands, flags) if not joined][:need]
-    print("[FS] user=%s recent=%d candidates=%d joined=%d show=%d" % (uid, recent, len(cands), sum(1 for f in flags if f), len(avail)))
+    dead = [cid for cid, f in zip(cands, flags) if f is None]
+    avail = [cid for cid, f in zip(cands, flags) if f is False][:need]
+    print("[FS] user=%s recent=%d candidates=%d joined=%d dead=%d show=%d" %
+          (uid, recent, len(cands), sum(1 for f in flags if f is True), len(dead), len(avail)))
+    if dead:
+        print("[FS] ignoring dead channels (use /cleanchannels):", dead)
     return avail
 
 async def fs_markup(c, pending, token):
@@ -240,6 +267,10 @@ ADMIN_CMDS = [
     BotCommand("deletechannels", "Remove Force-Sub channels"),
     BotCommand("channels", "List Force-Sub channels"),
     BotCommand("checkuser", "Check a user: joined / requested / pending"),
+    BotCommand("cleanchannels", "Remove dead / expired Force-Sub channels"),
+    BotCommand("refreshlinks", "Create fresh join-request links"),
+    BotCommand("stats", "Users, links, channels, requests count"),
+    BotCommand("users", "Download user list (txt)"),
     BotCommand("setfirstmessage", "Set message shown before files"),
     BotCommand("setlastmessage", "Set message shown after files"),
     BotCommand("setgreeting", "Set greeting for normal /start"),

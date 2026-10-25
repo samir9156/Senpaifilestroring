@@ -8,6 +8,7 @@ DEFAULT = {
     "requests": {},   # cid -> {uid: timestamp}
     "settings": {"first": None, "last": None, "greeting": None},
     "users": [],
+    "userinfo": {},   # uid -> {f: first seen, l: last seen, n: name, u: username}
 }
 
 class Database:
@@ -80,9 +81,23 @@ class Database:
         self.data["requests"].setdefault(str(cid), {})[str(uid)] = time.time()
         self.dirty = True
 
-    def add_user(self, uid):
+    def add_user(self, uid, name=None, username=None):
+        now = int(time.time())
+        key = str(uid)
+        info = self.data["userinfo"].get(key)
+        new = info is None
+        if new:
+            info = {"f": now, "l": now, "n": name or "", "u": username or ""}
+            self.data["userinfo"][key] = info
+        else:
+            info["l"] = now          # last seen: kept in memory, saved with next save
+            if name:
+                info["n"] = name
+            info["u"] = username or ""
         if uid not in self.data["users"]:
             self.data["users"].append(uid)
+            self.dirty = True
+        elif new:
             self.dirty = True
 
 db = Database()

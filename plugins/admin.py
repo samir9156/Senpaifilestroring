@@ -65,7 +65,9 @@ async def checkuser(c, m):
     for i, (cid, ch) in enumerate(db.data["channels"].items(), 1):
         ts = db.data["requests"].get(cid, {}).get(str(uid))
         joined = await is_member(c, int(cid), uid)
-        if joined:
+        if joined is None:
+            tag = "💀 dead channel (ignore hota hai)"
+        elif joined:
             tag = "✅ joined"
         elif ts:
             tag = "📨 request bheji (%d ghante pehle)" % int((now - ts) // 3600)

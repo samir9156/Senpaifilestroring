@@ -3,7 +3,7 @@ from pyrogram import Client, filters, raw
 from pyrogram.enums import ChatType
 from config import ADMIN_ID
 from database import db
-from helpers import add_channel, admin_f, clean, BATCH, CHANNELS
+from helpers import add_channel, admin_f, clean, channel_alive, BATCH, CHANNELS
 from autodetect import register_channel, unregister_channel, _call
 
 # ───────── raw updates (own group, never blocks other handlers) ─────────
@@ -105,8 +105,55 @@ async def channels(c, m):
     ch = db.data["channels"]
     if not ch:
         return await m.reply("Koi Force-Sub channel nahi hai.")
-    await m.reply("📋 Force-Sub channels (%d):\n\n" % len(ch) +
-                  "\n".join("%d. %s (%s)" % (i + 1, v["title"], k) for i, (k, v) in enumerate(ch.items())))
+    res = await asyncio.gather(*[channel_alive(c, cid) for cid in ch])
+    rows, dead = [], 0
+    for i, ((cid, v), (ok, why)) in enumerate(zip(ch.items(), res), 1):
+        if ok:
+            tag = "✅"
+        elif ok is None:
+            tag = "⚠️ check nahi hua"
+        else:
+            tag = "❌ " + why
+            dead += 1
+        rows.append("%d. %s (%s) %s" % (i, v.get("title"), cid, tag))
+    txt = "📋 Force-Sub channels (%d):\n\n%s" % (len(ch), "\n".join(rows))
+    if dead:
+        txt += "\n\n❌ %d dead channel hai. /cleanchannels se hata do." % dead
+    await m.reply(txt)
+
+@Client.on_message(filters.command("cleanchannels") & filters.private & admin_f)
+async def cleanchannels(c, m):
+    ch = db.data["channels"]
+    if not ch:
+        return await m.reply("Koi Force-Sub channel nahi hai.")
+    items = list(ch.items())
+    res = await asyncio.gather(*[channel_alive(c, cid) for cid, _ in items])
+    removed = []
+    for (cid, v), (ok, why) in zip(items, res):
+        if ok is False:
+            db.data["channels"].pop(cid, None)
+            removed.append("🗑 %s (%s) - %s" % (v.get("title"), cid, why))
+    if removed:
+        await db.save(c)
+        await m.reply("%s\n\nBache hue channels: %d" % ("\n".join(removed), len(db.data["channels"])))
+    else:
+        await m.reply("✅ Saare channels theek hain, kuch hatane ko nahi.")
+
+@Client.on_message(filters.command("refreshlinks") & filters.private & admin_f)
+async def refreshlinks(c, m):
+    ok, bad = 0, []
+    for cid, v in list(db.data["channels"].items()):
+        try:
+            l = await c.create_chat_invite_link(int(cid), name="ForceSub", creates_join_request=True)
+            v["invite"] = l.invite_link
+            ok += 1
+        except Exception as e:
+            bad.append("%s (%s): %s" % (v.get("title"), cid, e))
+    await db.save(c)
+    txt = "🔗 %d channels ke naye join-request links ban gaye." % ok
+    if bad:
+        txt += "\n\n❌ Fail:\n" + "\n".join(bad)
+    await m.reply(txt)
 
 # plain functions (called from plugins/done.py)
 async def chan_collect(c, m, s):
