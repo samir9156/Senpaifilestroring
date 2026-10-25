@@ -1,6 +1,7 @@
 from pyrogram import Client, filters
 from database import db
-from helpers import owner_f, clean, set_menu
+import time
+from helpers import owner_f, admin_f, clean, set_menu, is_member, get_pending
 
 async def _ask_target(c, m, action):
     # 1) reply  2) /cmd <id>  3) interactive: forward a message of the user OR send his numeric ID
@@ -53,3 +54,29 @@ async def del_admin(c, m):
         await db.save(c)
         return await c.send_message(m.chat.id, "🗑 %s admin se hata diya." % uid)
     await c.send_message(m.chat.id, "Ye user admin nahi hai.")
+
+@Client.on_message(filters.command("checkuser") & filters.private & admin_f)
+async def checkuser(c, m):
+    uid = await _ask_target(c, m, "check karna")
+    if not uid:
+        return
+    now = time.time()
+    rows = []
+    for i, (cid, ch) in enumerate(db.data["channels"].items(), 1):
+        ts = db.data["requests"].get(cid, {}).get(str(uid))
+        joined = await is_member(c, int(cid), uid)
+        if joined:
+            tag = "✅ joined"
+        elif ts:
+            tag = "📨 request bheji (%d ghante pehle)" % int((now - ts) // 3600)
+        else:
+            tag = "⏳ baaki"
+        rows.append("%d. %s - %s" % (i, ch.get("title"), tag))
+    show = await get_pending(c, uid)
+    names = [db.data["channels"][x].get("title") for x in show]
+    txt = "👤 User %s\n\n%s\n\n" % (uid, "\n".join(rows) if rows else "Koi channel nahi hai.")
+    if show:
+        txt += "Is user ko abhi dikhenge (%d): %s" % (len(show), ", ".join(names))
+    else:
+        txt += "✅ Is user ko abhi koi verification nahi, seedha files milengi."
+    await c.send_message(m.chat.id, txt)

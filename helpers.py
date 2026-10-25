@@ -1,10 +1,11 @@
 import asyncio, secrets, time
+import requests
 from pyrogram import filters
 from pyrogram.enums import ChatMemberStatus as S
 from pyrogram.errors import FloodWait, UserNotParticipant
 from pyrogram.types import (InlineKeyboardMarkup, InlineKeyboardButton, BotCommand,
                             BotCommandScopeDefault, BotCommandScopeChat)
-from config import ADMIN_ID, FS_WINDOW, AUTO_DELETE, REQUIRED_REQUESTS
+from config import ADMIN_ID, BOT_TOKEN, FS_WINDOW, AUTO_DELETE, REQUIRED_REQUESTS
 from database import db
 
 def is_admin(uid):
@@ -52,7 +53,24 @@ def auto_delete(msg, delay=AUTO_DELETE):
     t.add_done_callback(_tasks.discard)
 
 # ─────────────── Force Sub ───────────────
+def _bot_api(method, params):
+    r = requests.post("https://api.telegram.org/bot%s/%s" % (BOT_TOKEN, method), json=params, timeout=20)
+    return r.json()
+
 async def is_member(c, cid, uid):
+    # 1) Bot API getChatMember: most reliable (no Pyrogram peer-cache problems)
+    try:
+        res = await asyncio.to_thread(_bot_api, "getChatMember", {"chat_id": cid, "user_id": uid})
+        if res.get("ok"):
+            r = res["result"]
+            st = r.get("status")
+            ok = st in ("creator", "administrator", "member") or (st == "restricted" and bool(r.get("is_member")))
+            print("[FS] member check ch=%s user=%s status=%s -> %s" % (cid, uid, st, ok))
+            return ok
+        print("[FS] BotAPI getChatMember failed ch=%s user=%s: %s" % (cid, uid, res.get("description")))
+    except Exception as e:
+        print("[FS] BotAPI error:", repr(e))
+    # 2) fallback: Pyrogram
     try:
         mem = await c.get_chat_member(cid, uid)
         if mem.status in (S.MEMBER, S.ADMINISTRATOR, S.OWNER):
@@ -88,9 +106,9 @@ async def get_invite(c, cid):
 async def get_pending(c, uid):
     # RULE (rolling 24 hrs):
     #  - user must send join-requests to 3 NEW channels per 24 hrs
-    #  - only (3 - already done in last 24h) channels are SHOWN, never the full list
-    #  - a channel he already requested (ever) or is joined in is never asked again
-    #  - nothing new left to request -> free access, no verification
+    #  - joined channels / already requested channels are NEVER counted or shown
+    #  - only what is really left is shown (max 3 - done today). 1 or 2 left -> only 1 or 2
+    #  - nothing left -> free access
     # Returns the list of channels to SHOW; empty list = verified.
     now = time.time()
     reqs_all = db.data["requests"]
@@ -102,16 +120,10 @@ async def get_pending(c, uid):
     if recent >= REQUIRED_REQUESTS:
         return []
     need = REQUIRED_REQUESTS - recent
-    avail = []
-    for cid in list(db.data["channels"]):
-        if reqs_all.get(cid, {}).get(str(uid)):
-            continue                      # already requested earlier -> never again
-        if await is_member(c, int(cid), uid):
-            continue                      # already joined -> never asked
-        avail.append(cid)
-        if len(avail) >= need:
-            break
-    print("[FS] user=%s recent=%d need=%d show=%d" % (uid, recent, need, len(avail)))
+    cands = [cid for cid in db.data["channels"] if not reqs_all.get(cid, {}).get(str(uid))]
+    flags = await asyncio.gather(*[is_member(c, int(cid), uid) for cid in cands]) if cands else []
+    avail = [cid for cid, joined in zip(cands, flags) if not joined][:need]
+    print("[FS] user=%s recent=%d candidates=%d joined=%d show=%d" % (uid, recent, len(cands), sum(1 for f in flags if f), len(avail)))
     return avail
 
 async def fs_markup(c, pending, token):
@@ -191,6 +203,7 @@ ADMIN_CMDS = [
     BotCommand("addchannel", "Add Force-Sub channels"),
     BotCommand("deletechannels", "Remove Force-Sub channels"),
     BotCommand("channels", "List Force-Sub channels"),
+    BotCommand("checkuser", "Check a user: joined / requested / pending"),
     BotCommand("setfirstmessage", "Set message shown before files"),
     BotCommand("setlastmessage", "Set message shown after files"),
     BotCommand("setgreeting", "Set greeting for normal /start"),
