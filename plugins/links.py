@@ -1,7 +1,7 @@
 import asyncio, time
 from pyrogram import Client, filters
 from database import db
-from helpers import admin_f, safe, new_token, clean, BATCH, CHANNELS
+from helpers import admin_f, safe, new_token, clean, ask_timer, fmt_timer, BATCH, CHANNELS
 
 async def _store(c, msgs):
     ids = []
@@ -11,9 +11,9 @@ async def _store(c, msgs):
             ids.append(r.id)
     return sorted(ids)
 
-async def _make_link(c, ids, secure):
+async def _make_link(c, ids, secure, timer=0):
     token = new_token()
-    db.data["links"][token] = {"ids": ids, "secure": secure, "time": int(time.time())}
+    db.data["links"][token] = {"ids": ids, "secure": secure, "timer": timer, "time": int(time.time())}
     await db.save(c)
     return "https://t.me/%s?start=%s" % (c.me.username, token)
 
@@ -38,8 +38,10 @@ async def genlink(c, m):
         ids = await _store(c, [r])
         if not ids:
             return await c.send_message(m.chat.id, "❌ Storage channel me save nahi hua. Bot ke rights check karo.")
-        link = await _make_link(c, ids, secure)
-        await c.send_message(m.chat.id, "✅ %s Link:\n\n%s" % ("Secured (no forward/save)" if secure else "Shareable", link),
+        timer = await ask_timer(c, m.chat.id, junk)
+        link = await _make_link(c, ids, secure, timer)
+        await c.send_message(m.chat.id, "✅ %s Link:\n\n%s%s" % ("Secured (no forward/save)" if secure else "Shareable", link,
+                             ("\n\n⏱ Auto-delete: " + fmt_timer(timer)) if timer else ""),
                              disable_web_page_preview=True)
         await clean(c, m.chat.id, junk)
     except Exception as e:
@@ -71,10 +73,13 @@ async def batch_finish(c, m, sess):
         ids = await _store(c, msgs)
         if not ids:
             return await status.edit("❌ Storage channel me save nahi hua. Bot ke rights check karo.")
-        link = await _make_link(c, ids, sess["secure"])
-        await c.send_message(m.chat.id, "✅ %s Batch Link (%d msgs):\n\n%s" % ("Secured" if sess["secure"] else "Shareable", len(ids), link),
+        tj = []
+        timer = await ask_timer(c, m.chat.id, tj)
+        link = await _make_link(c, ids, sess["secure"], timer)
+        await c.send_message(m.chat.id, "✅ %s Batch Link (%d msgs):\n\n%s%s" % ("Secured" if sess["secure"] else "Shareable", len(ids), link,
+                             ("\n\n⏱ Auto-delete: " + fmt_timer(timer)) if timer else ""),
                              disable_web_page_preview=True)
-        await clean(c, m.chat.id, sess["junk"] + [x.id for x in msgs] + [m.id, status.id])
+        await clean(c, m.chat.id, sess["junk"] + [x.id for x in msgs] + [m.id, status.id] + tj)
     except Exception as e:
         print("[BATCH] error:", repr(e))
         await m.reply("❌ Error: %s" % e)

@@ -8,6 +8,8 @@ DEFAULT = {
     "requests": {},   # cid -> {uid: timestamp}
     "settings": {"first": None, "last": None, "greeting": None},
     "users": [],
+    "btn_channels": {},   # cid -> {title, rows: [[text,url],...], on}
+    "pending_del": [],    # [{c: chat_id, i: [msg ids], t: due timestamp}]
     "userinfo": {},   # uid -> {f: first seen, l: last seen, n: name, u: username}
 }
 
@@ -73,12 +75,16 @@ class Database:
 
     async def autosave(self, c):
         while True:
-            await asyncio.sleep(20)
+            await asyncio.sleep(30)
             if self.dirty:
                 await self.save(c)
 
     def mark_request(self, cid, uid):
         self.data["requests"].setdefault(str(cid), {})[str(uid)] = time.time()
+        self.dirty = True
+
+    def schedule_delete(self, chat_id, ids, delay):
+        self.data["pending_del"].append({"c": chat_id, "i": list(ids), "t": time.time() + delay})
         self.dirty = True
 
     def add_user(self, uid, name=None, username=None):

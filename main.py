@@ -8,6 +8,7 @@ from config import API_ID, API_HASH, BOT_TOKEN, ADMIN_ID, STORAGE
 from database import db
 from autodetect import poll
 from helpers import set_menu
+from scheduler import delete_loop
 
 async def main():
     if not (API_ID and API_HASH and BOT_TOKEN and ADMIN_ID and STORAGE):
@@ -26,6 +27,7 @@ async def main():
         return
     asyncio.create_task(db.autosave(app))
     asyncio.create_task(poll(app))
+    asyncio.create_task(delete_loop(app))
     await set_menu(app)
     try:
         await app.send_message(ADMIN_ID, "✅ Bot online! DB loaded. Channels: %d" % len(db.data["channels"]))

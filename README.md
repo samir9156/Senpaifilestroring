@@ -19,6 +19,9 @@ Bot must be ADMIN in the Storage Channel (post, pin, delete rights).
 - /addchannel then forward one message from each channel, /done - add Force-Sub channels
 - /deletechannels then forward one message from each channel, /done - remove channels
 - /channels - list Force-Sub channels
+- /button - button bot: forward a channel post (or send its link) + buttons -> bot adds buttons to that post; or send a new post -> bot returns it with buttons
+- /autobutton - auto-add buttons to every new post of a channel (send 'off' to stop). Button format: one line = one row, `Text - link`, `&&` = same row
+- Timer: after /genlink or /batch the bot asks an auto-delete timer for delivered files: minutes (1, 10, 30, 60...), 1d = 24h, 2d = 48h, skip
 - /checkuser - see a user's status per channel (joined / requested / baaki) and what he will be shown
 - /cleanchannels - remove dead channels (deleted / bot removed / bot not admin); dead channels are ignored for users anyway
 - /refreshlinks - create fresh join-request invite links for all channels

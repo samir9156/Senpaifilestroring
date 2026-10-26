@@ -1,4 +1,4 @@
-import asyncio, html as _html, secrets, time
+import asyncio, html as _html, re, secrets, time
 import requests
 from pyrogram import filters
 from pyrogram.enums import ChatMemberStatus as S
@@ -232,6 +232,58 @@ async def send_setting(c, uid, key, user=None):
     if msg:
         auto_delete(msg)
 
+# ─────────────── Timer (auto-delete of delivered files) ───────────────
+MAX_TIMER = 2 * 86400            # 2d (Telegram lets bots delete only messages < 48h old)
+TIMER_SAFETY = 600               # 2d is really executed ~10 min early so deletion still works
+
+def parse_timer(text):
+    # returns seconds, 0 = skip, None = not understood
+    t = (text or "").strip().lower()
+    if t in ("skip", "/skip", "no", "none", "off", "0"):
+        return 0
+    m = re.fullmatch(r"(\d+)\s*(d|day|days|h|hr|hrs|hour|hours|m|min|mins|minute|minutes)?", t)
+    if not m:
+        return None
+    n = int(m.group(1))
+    u = m.group(2) or "m"
+    return n * (86400 if u.startswith("d") else 3600 if u.startswith("h") else 60)
+
+def fmt_timer(sec):
+    if sec % 86400 == 0:
+        d = sec // 86400
+        return "%d day%s (%d hrs)" % (d, "" if d == 1 else "s", d * 24)
+    if sec >= 3600 and sec % 3600 == 0:
+        return "%d hr" % (sec // 3600)
+    return "%d min" % max(1, sec // 60)
+
+TIMER_HELP = ("⏱ Auto-delete timer set karo (user ko jaane ke baad files itne time me delete ho jayengi).\n\n"
+              "Minutes bhejo: 1, 10, 30, 60, 70, 80, 90 ...\n"
+              "1d = 24 hrs, 2d = 48 hrs\n\n"
+              "Timer nahi chahiye to: skip")
+
+async def ask_timer(c, chat_id, junk):
+    p = await c.send_message(chat_id, TIMER_HELP)
+    junk.append(p.id)
+    for _ in range(3):
+        try:
+            r = await c.listen(chat_id, timeout=180)
+        except Exception:
+            return 0
+        junk.append(r.id)
+        if (r.text or "").strip().lower().startswith("/cancel"):
+            return 0
+        sec = parse_timer(r.text)
+        if sec is None:
+            e = await c.send_message(chat_id, "⚠️ Samajh nahi aaya. Example: 10 , 90 , 1d , 2d ya skip")
+            junk.append(e.id)
+            continue
+        if sec > MAX_TIMER:
+            e = await c.send_message(chat_id, "⚠️ Max 2d (48 hrs) tak hi ho sakta hai (Telegram limit). Dobara bhejo.")
+            junk.append(e.id)
+            continue
+        return sec
+    return 0
+
 async def send_content(c, uid, token, user=None):
     link = db.data["links"].get(token)
     print("[SEND] uid=%s token=%s found=%s" % (uid, token, bool(link)))
@@ -239,10 +291,13 @@ async def send_content(c, uid, token, user=None):
         await c.send_message(uid, "❌ Link invalid hai ya expire ho chuka hai.")
         return
     await send_setting(c, uid, "first", user)
+    sent = []
     for mid in sorted(link["ids"]):
         for attempt in range(2):
             try:
-                await c.copy_message(uid, db.sid, mid, protect_content=bool(link.get("secure")))
+                m = await c.copy_message(uid, db.sid, mid, protect_content=bool(link.get("secure")))
+                if m is not None and getattr(m, "id", None):
+                    sent.append(m.id)
                 break
             except FloodWait as e:
                 await asyncio.sleep(e.value + 1)
@@ -251,7 +306,56 @@ async def send_content(c, uid, token, user=None):
                 await c.send_message(uid, "⚠️ File send nahi hui: %s" % e)
                 break
         await asyncio.sleep(0.4)
+    timer = int(link.get("timer") or 0)
+    if timer and sent:
+        try:
+            n = await c.send_message(uid, "⏳ <b>Note:</b> Ye files %s me delete ho jayengi. Forward ya save kar lo." % fmt_timer(timer))
+            sent.append(n.id)
+        except Exception as e:
+            print("[SEND] timer note failed:", repr(e))
+        delay = min(timer, MAX_TIMER - TIMER_SAFETY) if timer >= MAX_TIMER else timer
+        db.schedule_delete(uid, sent, delay)
+        print("[TIMER] scheduled delete of %d msgs for user %s in %ss" % (len(sent), uid, delay))
     await send_setting(c, uid, "last", user)
+
+# ─────────────── Buttons ───────────────
+def norm_url(u):
+    u = u.strip()
+    if u.startswith("@") and len(u) > 1:
+        return "https://t.me/" + u[1:]
+    if re.match(r"^(https?|tg)://", u, re.I):
+        return u
+    if u.lower().startswith(("t.me/", "telegram.me/")):
+        return "https://" + u
+    if re.match(r"^[\w.-]+\.[a-z]{2,}(/\S*)?$", u, re.I):
+        return "https://" + u
+    return None
+
+def parse_buttons(text):
+    # one line = one row, "&&" = more buttons in the same row. Format: Text - link
+    rows = []
+    for line in (text or "").strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        row = []
+        for part in line.split("&&"):
+            part = part.strip()
+            if " - " in part:
+                t, u = part.rsplit(" - ", 1)
+            elif "|" in part:
+                t, u = part.rsplit("|", 1)
+            else:
+                return None
+            t, url = t.strip(), norm_url(u)
+            if not t or not url:
+                return None
+            row.append([t, url])
+        rows.append(row)
+    return rows or None
+
+def buttons_markup(rows):
+    return InlineKeyboardMarkup([[InlineKeyboardButton(t, url=u) for t, u in r] for r in rows])
 
 # ─────────────── Bot command menu ───────────────
 USER_CMDS = [BotCommand("start", "Start the bot")]
@@ -270,6 +374,8 @@ ADMIN_CMDS = [
     BotCommand("cleanchannels", "Remove dead / expired Force-Sub channels"),
     BotCommand("refreshlinks", "Create fresh join-request links"),
     BotCommand("stats", "Users, links, channels, requests count"),
+    BotCommand("button", "Button bot: add buttons to a post"),
+    BotCommand("autobutton", "Auto buttons on every new channel post"),
     BotCommand("users", "Download user list (txt)"),
     BotCommand("setfirstmessage", "Set message shown before files"),
     BotCommand("setlastmessage", "Set message shown after files"),
