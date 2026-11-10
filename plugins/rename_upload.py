@@ -1,101 +1,176 @@
+import asyncio
 import os
+import re
+import shutil
 import time
+
 from pyrogram import Client, filters
 from pyrogram.types import Message
-import config
 
-THUMB_PATH = "thumbnail.jpg"
+from helpers import is_admin, BATCH, CHANNELS
 
-# Live Progress Bar Function
-async def progress_for_pyrogram(current, total, ud_type, message, start):
+THUMB_DIR = os.path.abspath("thumbs")      # per-admin thumbnail: thumbs/<user_id>.jpg
+DOWNLOAD_DIR = os.path.abspath("downloads")
+
+
+def thumb_path(uid):
+    return os.path.join(THUMB_DIR, "%s.jpg" % uid)
+
+
+def _fmt_bytes(n):
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return ("%d %s" % (n, unit)) if unit == "B" else ("%.2f %s" % (n, unit))
+        n /= 1024
+
+
+def _fmt_time(sec):
+    sec = int(sec)
+    m, s = divmod(sec, 60)
+    h, m = divmod(m, 60)
+    return ("%dh %dm %ds" % (h, m, s)) if h else ("%dm %ds" % (m, s))
+
+
+def _bar(pct):
+    filled = int(pct // 10)
+    return "█" * filled + "░" * (10 - filled)
+
+
+async def progress_for_pyrogram(current, total, label, message, start, state):
+    """Live progress bar. Edits the status message at most every ~4 sec."""
     now = time.time()
-    diff = now - start
-    if round(diff % 5.00) == 0 or current == total:
-        percentage = current * 100 / total
-        speed = current / diff
-        elapsed_time = round(diff) * 1000
-        time_to_completion = round((total - current) / speed) * 1000 if speed > 0 else 0
-        
-        def format_bytes(bytes):
-            if bytes < 1024: return f"{bytes} B"
-            elif bytes < 1024**2: return f"{bytes/1024:.1f} KB"
-            elif bytes < 1024**3: return f"{bytes/1024**2:.1f} MB"
-            else: return f"{bytes/1024**3:.2f} GB"
-            
-        def format_time(milliseconds):
-            seconds = (milliseconds / 1000) % 60
-            minutes = (milliseconds / (1000 * 60)) % 60
-            return f"{int(minutes)}m {int(seconds)}s"
-
-        tmp = f"{ud_type}\n"
-        tmp += f"**[{format_bytes(current)} of {format_bytes(total)}]**\n"
-        tmp += f"**Speed:** {format_bytes(speed)}/s\n"
-        tmp += f"**Progress:** {percentage:.1f}%\n"
-        tmp += f"**ETA:** {format_time(time_to_completion) if current != total else '0s'}"
-        
-        try: await message.edit_text(tmp)
-        except: pass
-
-# 1. Set Thumbnail (Image bhej kar)
-@Client.on_message(filters.photo & filters.private)
-async def set_thumbnail(client: Client, message: Message):
-    if message.from_user.id != config.ADMIN_ID: return
-    if message.reply_to_message: return 
-    
-    status = await message.reply_text("⏳ **Downloading Thumbnail...**")
+    if current != total and now - state.get("last", 0) < 4:
+        return
+    state["last"] = now
+    diff = max(now - start, 0.001)
+    speed = current / diff
+    pct = current * 100 / total if total else 0
+    eta = (total - current) / speed if speed > 0 else 0
+    text = (
+        "%s\n\n[%s] %.1f%%\n"
+        "📦 %s / %s\n"
+        "🚀 Speed: %s/s\n"
+        "⏳ ETA: %s"
+    ) % (label, _bar(pct), pct, _fmt_bytes(current), _fmt_bytes(total),
+         _fmt_bytes(speed), _fmt_time(eta) if current != total else "0s")
     try:
-        await message.download(file_name=THUMB_PATH)
-        await status.edit_text("✅ **Thumbnail Set Successfully!**\n\nAb kisi bhi video ko reply me naya naam bhej kar upload kar sakte ho.")
-    except Exception as e:
-        await status.edit_text(f"❌ Error: {e}")
+        await message.edit_text(text)
+    except Exception:
+        pass
 
-# 2. Rename & Upload (Reply me text bhej kar)
+
+def _make_thumb(src, dst):
+    """Telegram thumbs must be JPEG, max 320px side, under 200 KB."""
+    from PIL import Image
+    im = Image.open(src).convert("RGB")
+    im.thumbnail((320, 320))
+    q = 90
+    while True:
+        im.save(dst, "JPEG", quality=q)
+        if os.path.getsize(dst) <= 200 * 1024 or q <= 30:
+            break
+        q -= 10
+
+
+def _busy(client, m):
+    """True if admin is inside /batch, /addchannel or a listen() prompt."""
+    cid = m.chat.id
+    if cid in BATCH or cid in CHANNELS:
+        return True
+    return cid in (getattr(client, "listening", None) or {})
+
+
+# 1. Image bhejo (bina command ke) -> thumbnail set
+@Client.on_message(filters.photo & filters.private & ~filters.reply)
+async def set_thumbnail(client: Client, message: Message):
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+    if _busy(client, message):
+        return
+    status = await message.reply_text("⏳ Thumbnail set ho raha hai...")
+    tmp = None
+    try:
+        os.makedirs(THUMB_DIR, exist_ok=True)
+        tmp = os.path.join(THUMB_DIR, "raw_%s.jpg" % message.id)
+        await client.download_media(message, file_name=tmp)
+        await asyncio.to_thread(_make_thumb, tmp, thumb_path(message.from_user.id))
+        await status.edit_text("✅ Thumbnail set ho gaya!\n\nAb koi bhi video bhejo, usko reply me naya naam do.")
+    except Exception as e:
+        await status.edit_text("❌ Error: %s" % e)
+    finally:
+        if tmp and os.path.exists(tmp):
+            os.remove(tmp)
+
+
+# 2. Video/file ke reply me naya naam -> download + upload (progress bar ke saath)
 @Client.on_message(filters.text & filters.reply & filters.private & ~filters.regex(r"^/"))
 async def rename_and_upload(client: Client, message: Message):
-    if message.from_user.id != config.ADMIN_ID: return
-    replied_msg = message.reply_to_message
-    
-    if not (replied_msg.video or replied_msg.document or replied_msg.audio): return
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+    if _busy(client, message):
+        return
+    src = message.reply_to_message
+    media = src.video or src.document or src.audio
+    if not media:
+        return
 
-    new_name = message.text.strip()
+    new_name = re.sub(r'[\\/:*?"<>|\n\r]+', " ", message.text).strip()
+    if not new_name:
+        return
     if "." not in new_name:
-        if replied_msg.video: new_name += ".mp4"
-        elif replied_msg.document:
-            ext = replied_msg.document.file_name.split(".")[-1] if replied_msg.document.file_name else "mkv"
-            new_name += f".{ext}"
+        old = getattr(media, "file_name", None)
+        if old and "." in old:
+            new_name += "." + old.rsplit(".", 1)[-1]
+        else:
+            new_name += ".mp3" if src.audio else ".mp4"
 
-    status_msg = await message.reply_text("⏳ **Processing...**")
-    download_path = f"downloads/{new_name}"
-    os.makedirs("downloads", exist_ok=True)
+    work = os.path.join(DOWNLOAD_DIR, "%s_%s" % (message.chat.id, message.id))
+    file_path = os.path.join(work, new_name)
+    os.makedirs(work, exist_ok=True)
+    status = await message.reply_text("⏳ Processing...")
+    thumb = thumb_path(message.from_user.id)
+    thumb = thumb if os.path.exists(thumb) else None
 
     try:
-        await status_msg.edit_text(f"⬇️ **Downloading...**\nTarget: `{new_name}`")
-        start_time = time.time()
-        file_path = await client.download_media(
-            replied_msg, file_name=download_path,
-            progress=progress_for_pyrogram, progress_args=("⬇️ **Downloading...**", status_msg, start_time)
+        start = time.time()
+        await client.download_media(
+            src, file_name=file_path,
+            progress=progress_for_pyrogram,
+            progress_args=("⬇️ Downloading...\n`%s`" % new_name, status, start, {}),
         )
-        
-        await status_msg.edit_text(f"⬆️ **Uploading...**\nName: `{new_name}`")
-        start_time = time.time()
-        thumb = THUMB_PATH if os.path.exists(THUMB_PATH) else None
-        
-        if replied_msg.video:
+
+        start = time.time()
+        up_args = ("⬆️ Uploading...\n`%s`" % new_name, status, start, {})
+        caption = src.caption or ""
+        if src.video:
+            v = src.video
             await client.send_video(
-                chat_id=message.chat.id, video=file_path, caption=replied_msg.caption or "",
-                file_name=new_name, thumb=thumb, supports_streaming=True,
-                progress=progress_for_pyrogram, progress_args=("⬆️ **Uploading...**", status_msg, start_time)
+                message.chat.id, file_path, caption=caption, file_name=new_name,
+                thumb=thumb, duration=v.duration or 0, width=v.width or 0, height=v.height or 0,
+                supports_streaming=True,
+                progress=progress_for_pyrogram, progress_args=up_args,
+            )
+        elif src.audio:
+            await client.send_audio(
+                message.chat.id, file_path, caption=caption, file_name=new_name,
+                thumb=thumb, duration=src.audio.duration or 0,
+                performer=src.audio.performer, title=src.audio.title,
+                progress=progress_for_pyrogram, progress_args=up_args,
             )
         else:
             await client.send_document(
-                chat_id=message.chat.id, document=file_path, caption=replied_msg.caption or "",
-                file_name=new_name, thumb=thumb,
-                progress=progress_for_pyrogram, progress_args=("⬆️ **Uploading...**", status_msg, start_time)
+                message.chat.id, file_path, caption=caption, file_name=new_name,
+                thumb=thumb,
+                progress=progress_for_pyrogram, progress_args=up_args,
             )
-            
-        await status_msg.delete()
-        try: await replied_msg.delete(); await message.delete()
-        except: pass
-        if os.path.exists(file_path): os.remove(file_path)
+
+        await status.delete()
+        for m in (src, message):
+            try:
+                await m.delete()
+            except Exception:
+                pass
     except Exception as e:
-        await status_msg.edit_text(f"❌ **Error:** {str(e)}")
+        await status.edit_text("❌ Error: %s" % e)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
