@@ -332,25 +332,34 @@ def norm_url(u):
     return None
 
 def parse_buttons(text):
-    # one line = one row, "&&" = more buttons in the same row. Format: Text - link
+    # one line = one row. Same row ke buttons "|" (ya purana "&&") se alag karo.
+    # Format: Text1 - link | Text2 - link | Text3 - link
     rows = []
     for line in (text or "").strip().splitlines():
         line = line.strip()
         if not line:
             continue
         row = []
-        for part in line.split("&&"):
-            part = part.strip()
-            if " - " in part:
-                t, u = part.rsplit(" - ", 1)
-            elif "|" in part:
-                t, u = part.rsplit("|", 1)
-            else:
-                return None
-            t, url = t.strip(), norm_url(u)
+        ok = True
+        for part in re.split(r"\s*(?:&&|\|)\s*", line):
+            if " - " not in part:
+                ok = False
+                break
+            t, u = part.rsplit(" - ", 1)
+            t, url = t.strip(), norm_url(u.strip())
             if not t or not url:
-                return None
+                ok = False
+                break
             row.append([t, url])
+        if not ok:
+            # purana single-button format: Text | link
+            if " - " not in line and "|" in line and "&&" not in line:
+                t, u = line.rsplit("|", 1)
+                t, url = t.strip(), norm_url(u.strip())
+                if t and url:
+                    rows.append([[t, url]])
+                    continue
+            return None
         rows.append(row)
     return rows or None
 
