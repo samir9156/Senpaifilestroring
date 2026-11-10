@@ -114,7 +114,9 @@ async def rename_and_upload(client: Client, message: Message):
     if not media:
         return
 
-    new_name = re.sub(r'[\\/:*?"<>|\n\r]+', " ", message.text).strip()
+    # Pehli line = file ka naam, poora text = caption
+    first_line = message.text.strip().split("\n")[0]
+    new_name = re.sub(r'[\\/:*?"<>|\r]+', " ", first_line).strip()
     if not new_name:
         return
     if "." not in new_name:
@@ -141,7 +143,7 @@ async def rename_and_upload(client: Client, message: Message):
 
         start = time.time()
         up_args = ("⬆️ Uploading...\n`%s`" % new_name, status, start, {})
-        caption = src.caption or ""
+        caption = message.text.html.strip()[:1024]   # reply me jo likha wahi caption
         if src.video:
             v = src.video
             await client.send_video(
