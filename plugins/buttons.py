@@ -6,10 +6,11 @@ from database import db
 from helpers import admin_f, clean, channel_alive, parse_buttons, buttons_markup
 
 BTN_HELP = ("🔘 Buttons bhejo (ek line = ek row).\n"
-            "Ek hi row me 2 button chahiye to && lagao.\n\n"
+            "Ek hi row me kai button chahiye to | lagao.\n\n"
             "Format:\n"
             "Watch Now - https://t.me/Kage_store_bot?start=abc\n"
-            "Join - @SenpaiAnimess && Share - https://example.com\n\n"
+            "Join - @SenpaiAnimess | Share - https://example.com | More - https://t.me/abc\n"
+            "Support - https://t.me/xyz\n\n"
             "Cancel: /cancel")
 
 def _is_cancel(r):
