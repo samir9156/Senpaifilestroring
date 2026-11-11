@@ -11,11 +11,22 @@ import zipfile
 from pyrogram import Client, filters
 from pyrogram.handlers import MessageHandler
 
-from config import (API_ID, API_HASH, ADMIN_ID, SESSION_STRING, SOURCE_CHANNEL, OUTPUT_CHANNEL,
-                    MAIN_LINK, LINK_TIMER_MIN, DEFAULT_TITLE)
+import database
+from config import API_ID, API_HASH, ADMIN_ID
 from database import db
 from helpers import admin_f, new_token, buttons_markup, safe
 from plugins.rename_upload import _make_thumb
+
+# ───────── Settings (sirf env se, store bot ki config.py ko chedna nahi padta) ─────────
+SESSION_STRING = os.environ.get("SESSION_STRING", "").strip()               # Pyrogram v2 string session
+SOURCE_CHANNEL = int(os.environ.get("SOURCE_CHANNEL", "-1002008379081"))    # jahan se episodes uthane hain
+OUTPUT_CHANNEL = int(os.environ.get("OUTPUT_CHANNEL", "-1002527066036"))    # jahan post karna hai
+MAIN_LINK = os.environ.get("MAIN_LINK", "https://t.me/SenpaiAnimess").strip()
+LINK_TIMER_MIN = int(os.environ.get("LINK_TIMER_MIN", "60"))                # genlink delay (minutes)
+DEFAULT_TITLE = os.environ.get("DEFAULT_TITLE", "Naruto Shippuden").strip()
+
+# database.json me "uploader" ka data save/load ho, iske liye default register karo (database.py edit nahi)
+database.DEFAULT.setdefault("uploader", {"on": True, "caption": None, "rename": None, "eps": {}, "alias": {}, "seen": []})
 
 WORK = os.path.abspath("downloads/autoup")
 JOIN_TEXT = "💫Join Main Channel💫"
@@ -428,3 +439,15 @@ async def thumb_name(c, m):
         return await m.reply("⚠️ Naam me 'Episode <number>' hona chahiye.\nExample: Naruto Shippuden Season 18 Episode 380(08) [{Quality}] [@SenpaiAnimess]")
     key = set_entry(info, tpl=fix_tpl(m.text.strip()), thumb=r.photo.file_id)
     await m.reply("✅ Episode %s ka thumbnail + naam save ho gaya." % key)
+
+
+# ───────── Auto start (main.py edit nahi): db.load ke baad userbot chalu ─────────
+_orig_load = db.load
+
+
+async def _load_then_start(c):
+    await _orig_load(c)
+    asyncio.create_task(start_userbot(c))
+
+
+db.load = _load_then_start
