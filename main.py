@@ -12,7 +12,7 @@ from scheduler import delete_loop
 
 async def main():
     if not (API_ID and API_HASH and BOT_TOKEN and ADMIN_ID and STORAGE):
-        print("❌ Variables missing! Fill API_ID, API_HASH, BOT_TOKEN, ADMIN_ID, STORAGE_CHANNEL_INPUT")
+        print("❌ Variables missing! Fill API_ID, API_HASH, BOT_TOKEN, ADMIN_ID, STORAGE")
         return
     app = Client("filestore", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN,
                  plugins=dict(root="plugins"), in_memory=True)
