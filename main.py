@@ -4,7 +4,7 @@ asyncio.set_event_loop(loop)
 
 import pyromod.listen  # noqa: F401  (patches Client.listen)
 from pyrogram import Client, idle
-from config import API_ID, API_HASH, BOT_TOKEN, ADMIN_ID, STORAGE_CHANNEL_INPUT
+from config import API_ID, API_HASH, BOT_TOKEN, ADMIN_ID, STORAGE
 from database import db
 from autodetect import poll
 from helpers import set_menu
