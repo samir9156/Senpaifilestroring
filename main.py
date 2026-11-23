@@ -1,4 +1,6 @@
-import asyncio, os
+import asyncio, os, sys
+sys.stdout.reconfigure(line_buffering=True)   # Railway logs turant dikhein
+sys.stderr.reconfigure(line_buffering=True)
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
@@ -29,5 +31,3 @@ async def load_storage(app):
             return True
         except Exception as e:
             print("[DB] load failed (%d/40): %r" % (attempt + 1, e))
-            if attempt == 0:
-                print("[DB] Storage channel me koi bhi message post karo (bot admin hona chahiye), bot wait kar raha hai...")
