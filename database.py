@@ -33,6 +33,13 @@ class Database:
             self.data[k] = val
 
     async def load(self, c):
+        # 🔥 FIX: Private channel resolve karne ke liye ek dummy message bhejna zaroori hai
+        try:
+            ping = await c.send_message(STORAGE, "🔄 Resolving channel...")
+            await ping.delete()
+        except Exception as e:
+            print("[DB] Ping failed:", e)
+
         chat = await c.get_chat(STORAGE)
         self.sid = chat.id
         pm = chat.pinned_message
