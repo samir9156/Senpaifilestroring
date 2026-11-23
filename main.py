@@ -1,3 +1,4 @@
+print("MAIN.PY LOADED", flush=True)
 import asyncio, os, sys
 sys.stdout.reconfigure(line_buffering=True)   # Railway logs turant dikhein
 sys.stderr.reconfigure(line_buffering=True)
